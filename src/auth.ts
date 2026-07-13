@@ -34,6 +34,16 @@ export const auth = betterAuth({
         required: false,
         input: true,
       },
+      floor: {
+        type: "string",
+        required: false,
+        input: true,
+      },
+      flat: {
+        type: "string",
+        required: false,
+        input: true,
+      },
     },
   },
 });

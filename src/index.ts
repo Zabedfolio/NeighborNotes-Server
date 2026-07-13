@@ -70,6 +70,8 @@ interface IReport {
   buildingId: string;
   residentId: string;       // the submitting resident's userId
   residentName?: string;
+  residentFloor?: string;
+  residentFlat?: string;
   title: string;
   description: string;
   category: "Maintenance" | "Emergency" | "Lost & Found" | "General";
@@ -79,6 +81,19 @@ interface IReport {
   updatedAt?: Date;
 }
 
+interface ISubscriptionTier {
+  id: string;
+  name: string;
+  price: string;
+  period: string;
+  features: string[];
+  limitNotices: string;
+  limitNoticesVal: number;
+  limitResidents: string;
+  limitResidentsVal: number;
+  isPopular?: boolean;
+}
+
 interface IUser {
   _id?: any;
   name: string;
@@ -86,6 +101,8 @@ interface IUser {
   role?: string;
   buildingId?: string;
   suspended?: boolean;
+  floor?: string;
+  flat?: string;
 }
 
 const buildingSchema = new Schema<IBuilding>({
@@ -149,6 +166,8 @@ const reportSchema = new Schema<IReport>({
   buildingId: { type: String, required: true, index: true },
   residentId: { type: String, required: true, index: true },
   residentName: { type: String },
+  residentFloor: { type: String },
+  residentFlat: { type: String },
   title: { type: String, required: true },
   description: { type: String, required: true },
   category: {
@@ -169,7 +188,22 @@ const userSchema = new Schema<IUser>({
   role: { type: String },
   buildingId: { type: String },
   suspended: { type: Boolean, default: false },
+  floor: { type: String },
+  flat: { type: String },
 }, { collection: "user" });
+
+const subscriptionTierSchema = new Schema<ISubscriptionTier>({
+  id: { type: String, required: true, unique: true },
+  name: { type: String, required: true },
+  price: { type: String, required: true },
+  period: { type: String, required: true },
+  features: [{ type: String }],
+  limitNotices: { type: String, required: true },
+  limitNoticesVal: { type: Number, required: true },
+  limitResidents: { type: String, required: true },
+  limitResidentsVal: { type: Number, required: true },
+  isPopular: { type: Boolean, default: false },
+});
 
 const Building = model<IBuilding>("Building", buildingSchema);
 const Invite = model<IInvite>("Invite", inviteSchema);
@@ -178,6 +212,7 @@ const Comment = model<IComment>("Comment", commentSchema);
 const Reaction = model<IReaction>("Reaction", reactionSchema);
 const Report = model<IReport>("Report", reportSchema);
 const User = model<IUser>("User", userSchema);
+const SubscriptionTier = model<ISubscriptionTier>("SubscriptionTier", subscriptionTierSchema);
 
 // ── 2. APP SETUP ──────────────────────────────────────────────────────
 
@@ -257,7 +292,15 @@ function canModify(user: any, doc: any) {
 app.get("/api/users", async (req, res) => {
   try {
     const users = await User.find(req.query as any);
-    res.json(users.map(u => ({ id: u._id, name: u.name, email: u.email, role: u.role, buildingId: u.buildingId })));
+    res.json(users.map(u => ({ 
+      id: u._id, 
+      name: u.name, 
+      email: u.email, 
+      role: u.role, 
+      buildingId: u.buildingId,
+      floor: u.floor,
+      flat: u.flat
+    })));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -267,7 +310,44 @@ app.get("/api/users/:id", async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: "User not found" });
-    res.json({ id: user._id, name: user.name, email: user.email, role: user.role, buildingId: user.buildingId });
+    res.json({ 
+      id: user._id, 
+      name: user.name, 
+      email: user.email, 
+      role: user.role, 
+      buildingId: user.buildingId,
+      floor: user.floor,
+      flat: user.flat
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/users/profile", requireAuth, async (req, res) => {
+  try {
+    const userId = (req as AuthenticatedRequest).currentUser?.id;
+    const { name, floor, flat } = req.body;
+
+    // At least one field must be provided
+    if (!name && !floor && !flat) {
+      return res.status(400).json({ error: "At least one field (name, floor, flat) must be provided." });
+    }
+
+    const updateFields: Record<string, string> = {};
+    if (name && name.trim()) updateFields.name = name.trim();
+    if (floor !== undefined) updateFields.floor = floor.toString().trim();
+    if (flat !== undefined) updateFields.flat = flat.toString().trim();
+
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      updateFields,
+      { new: true }
+    );
+    if (!updatedUser) {
+      return res.status(404).json({ error: "User profile record not found." });
+    }
+    res.json({ message: "Profile updated successfully.", user: updatedUser });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -583,12 +663,22 @@ app.post("/api/reports", requireAuth, async (req, res) => {
       return res.status(403).json({ message: "You must be in a building to submit a report." });
     }
 
+    // Load db user record to verify profile complete
+    const dbUser = await User.findById(user.id);
+    if (!dbUser || !dbUser.floor || !dbUser.flat) {
+      return res.status(403).json({ 
+        message: "You must complete your profile by providing your Floor and Flat number before submitting a report." 
+      });
+    }
+
     const { title, description, category, imageUrl } = req.body;
 
     const report = await Report.create({
       buildingId: user.buildingId,    // always from session
       residentId: user.id,            // always from session
       residentName: user.name,
+      residentFloor: dbUser.floor,
+      residentFlat: dbUser.flat,
       title,
       description,
       category,
@@ -964,13 +1054,160 @@ app.get("/api/admin/stats", async (req, res) => {
   }
 });
 
+// -- Subscription Tiers API --
+
+// GET /api/subscriptions - Public route to fetch all tiers
+app.get("/api/subscriptions", async (req, res) => {
+  try {
+    const tiers = await SubscriptionTier.find({});
+    res.json(tiers);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/subscriptions - Fetch all tiers for admin
+app.get("/api/admin/subscriptions", async (req, res) => {
+  try {
+    const tiers = await SubscriptionTier.find({});
+    res.json(tiers);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/subscriptions - Create a new custom subscription tier
+app.post("/api/admin/subscriptions", async (req, res) => {
+  try {
+    const { id, name, price, period, features, limitNotices, limitNoticesVal, limitResidents, limitResidentsVal, isPopular } = req.body;
+    
+    // Check if the id is unique
+    const existing = await SubscriptionTier.findOne({ id });
+    if (existing) {
+      return res.status(400).json({ error: "A subscription tier with this ID already exists." });
+    }
+
+    const tier = new SubscriptionTier({
+      id,
+      name,
+      price,
+      period,
+      features,
+      limitNotices,
+      limitNoticesVal: Number(limitNoticesVal),
+      limitResidents,
+      limitResidentsVal: Number(limitResidentsVal),
+      isPopular: Boolean(isPopular),
+    });
+
+    await tier.save();
+    res.status(201).json(tier);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/admin/subscriptions/:id - Update an existing subscription tier
+app.patch("/api/admin/subscriptions/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+    
+    if (updateData.limitNoticesVal !== undefined) updateData.limitNoticesVal = Number(updateData.limitNoticesVal);
+    if (updateData.limitResidentsVal !== undefined) updateData.limitResidentsVal = Number(updateData.limitResidentsVal);
+    if (updateData.isPopular !== undefined) updateData.isPopular = Boolean(updateData.isPopular);
+
+    const updated = await SubscriptionTier.findOneAndUpdate(
+      { id },
+      { $set: updateData },
+      { new: true }
+    );
+    if (!updated) {
+      return res.status(404).json({ error: "Subscription tier not found." });
+    }
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/admin/subscriptions/:id - Delete a custom subscription tier
+app.delete("/api/admin/subscriptions/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Don't allow deleting core tiers (free, growth, unlimited) to prevent bricking the platform
+    if (["free", "growth", "unlimited"].includes(id)) {
+      return res.status(400).json({ error: "Cannot delete core subscription tiers (free, growth, unlimited)." });
+    }
+
+    const deleted = await SubscriptionTier.findOneAndDelete({ id });
+    if (!deleted) {
+      return res.status(404).json({ error: "Subscription tier not found." });
+    }
+    res.status(204).send();
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+async function seedDefaultSubscriptionTiers() {
+  try {
+    const count = await SubscriptionTier.countDocuments();
+    if (count === 0) {
+      console.log("Seeding default subscription tiers in database...");
+      await SubscriptionTier.insertMany([
+        {
+          id: "free",
+          name: "Free Tier",
+          price: "$0",
+          period: "forever",
+          limitNotices: "15 active postings",
+          limitNoticesVal: 15,
+          limitResidents: "50 residents max",
+          limitResidentsVal: 50,
+          features: ["Standard bulletin board", "Email invites", "Owner notice pinning", "Basic community stats"],
+          isPopular: false,
+        },
+        {
+          id: "growth",
+          name: "Growth Tier",
+          price: "$19",
+          period: "per month",
+          limitNotices: "100 active postings",
+          limitNoticesVal: 100,
+          limitResidents: "250 residents max",
+          limitResidentsVal: 250,
+          features: ["Express building boards", "Unlimited email invites", "Analytics dashboard", "Priority resident triage", "Priority support"],
+          isPopular: true,
+        },
+        {
+          id: "unlimited",
+          name: "Unlimited Tier",
+          price: "$49",
+          period: "per month",
+          limitNotices: "Unlimited active postings",
+          limitNoticesVal: 999999,
+          limitResidents: "Unlimited residents",
+          limitResidentsVal: 999999,
+          features: ["Multiple board categories", "Advanced platform metrics", "SMS/Push notifications", "Stripe subscription portal", "24/7 dedicated support"],
+          isPopular: false,
+        },
+      ]);
+      console.log("Default subscription tiers seeded successfully.");
+    }
+  } catch (err: any) {
+    console.error("Error seeding default subscription tiers:", err.message);
+  }
+}
+
 // ── 5. START ──────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || "mongodb://127.0.0.1:27017/neighbornotes";
 
-mongoose.connect(MONGO_URI).then(() => {
+mongoose.connect(MONGO_URI).then(async () => {
   console.log("Connected to MongoDB successfully via Mongoose.");
+  await seedDefaultSubscriptionTiers();
   app.listen(PORT, () => {
     console.log(`NeighborNotes Express Server running on port ${PORT}`);
   });
