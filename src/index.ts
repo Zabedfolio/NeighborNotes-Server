@@ -307,6 +307,49 @@ app.get("/api/buildings/:param", async (req, res) => {
   }
 });
 
+// Owner edit building details (specifically editing the Area Code in correct format)
+app.patch("/api/buildings/:id", requireAuth, async (req, res) => {
+  try {
+    const user = (req as AuthenticatedRequest).currentUser!;
+    if (user.role !== "owner") {
+      return res.status(403).json({ message: "Forbidden: Owners only." });
+    }
+
+    const building = await Building.findById(req.params.id);
+    if (!building) {
+      return res.status(404).json({ message: "Building not found." });
+    }
+
+    if (building.ownerId !== user.id) {
+      return res.status(403).json({ message: "Forbidden: You do not own this building." });
+    }
+
+    const { areaCode } = req.body;
+    if (!areaCode) {
+      return res.status(400).json({ message: "Area Code is required." });
+    }
+
+    // Format validation: CITY-PREFIX-DIGITS, e.g. DHK-GLS-8822
+    const codeRegex = /^[A-Z]{3}-[A-Z]{3}-\d{4}$/;
+    if (!codeRegex.test(areaCode)) {
+      return res.status(400).json({ message: "Invalid Area Code format. Must match standard format (e.g. DHK-GLS-8822)." });
+    }
+
+    // Uniqueness check
+    const existing = await Building.findOne({ areaCode, _id: { $ne: req.params.id } });
+    if (existing) {
+      return res.status(400).json({ message: "Area Code is already in use by another building." });
+    }
+
+    building.areaCode = areaCode;
+    await building.save();
+
+    res.json(building);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // -- Invites --
 const PLAN_LIMITS = { free: 20, growth: 40, unlimited: Infinity };
 
@@ -803,6 +846,24 @@ app.delete("/api/admin/notices/:id", async (req, res) => {
   }
 });
 
+app.get("/api/admin/reports", async (req, res) => {
+  try {
+    const reports = await Report.find({});
+    res.json(reports);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/reports/:id", async (req, res) => {
+  try {
+    await Report.findByIdAndDelete(req.params.id);
+    res.status(204).send();
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/admin/users", async (req, res) => {
   try {
     const users = await User.find({});
@@ -816,6 +877,74 @@ app.patch("/api/admin/users/:id", async (req, res) => {
   try {
     const user = await User.findByIdAndUpdate(req.params.id, req.body, { new: true });
     res.json(user);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin Create Building
+app.post("/api/admin/buildings", async (req, res) => {
+  try {
+    const { name, address, plan, areaCode, ownerId } = req.body;
+    let computedAreaCode = areaCode;
+    if (!computedAreaCode) {
+      const city = "DHK";
+      const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      const randomPrefix = Array.from({ length: 3 }, () => letters[Math.floor(Math.random() * letters.length)]).join("");
+      const randomDigits = Math.floor(1000 + Math.random() * 9000);
+      computedAreaCode = `${city}-${randomPrefix}-${randomDigits}`;
+    }
+    const building = await Building.create({
+      name,
+      address,
+      plan: plan || "free",
+      areaCode: computedAreaCode,
+      ownerId: ownerId || "unassigned",
+    });
+    if (ownerId && ownerId !== "unassigned") {
+      await User.findByIdAndUpdate(ownerId, { buildingId: building._id, role: "owner" });
+    }
+    res.status(201).json(building);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Admin Create User (via Better Auth programmatic signup + DB update)
+app.post("/api/admin/users", async (req, res) => {
+  try {
+    const { name, email, password, role, buildingId } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: "Name, email and password are required." });
+    }
+    
+    // Create using Better Auth email signup API to handle password hashing/auth setup
+    const signup = await auth.api.signUpEmail({
+      body: { email, password, name }
+    });
+    
+    const userId = signup.user.id;
+    // Set custom role and building reference directly in MongoDB user collection
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { role: role || "resident", buildingId: buildingId || "" },
+      { new: true }
+    );
+    res.status(201).json(updatedUser);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to create user account." });
+  }
+});
+
+// Admin Delete User (cleans up auth sessions and accounts too)
+app.delete("/api/admin/users/:id", async (req, res) => {
+  try {
+    await Promise.all([
+      User.findByIdAndDelete(req.params.id),
+      mongoose.connection.db?.collection("session").deleteMany({ userId: req.params.id }),
+      mongoose.connection.db?.collection("account").deleteMany({ userId: req.params.id }),
+    ]);
+    res.status(204).send();
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

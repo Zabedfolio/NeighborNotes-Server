@@ -3,9 +3,7 @@ const { MongoClient, ObjectId } = require('mongodb');
 const MONGO_URI = 'mongodb://NeighborNotes:tx8tNO3eYorV1iWV@ac-hblkeaq-shard-00-00.mldxc9s.mongodb.net:27017,ac-hblkeaq-shard-00-01.mldxc9s.mongodb.net:27017,ac-hblkeaq-shard-00-02.mldxc9s.mongodb.net:27017/neighbornotes?ssl=true&authSource=admin';
 const API_URL = 'http://localhost:5000/api';
 
-// Known active user IDs from DB
-const OWNER_ID = '6a5467baa0d815820f583acb';
-const RESIDENT_ID = '6a5467baa0d815820f583ace';
+// Will query active user IDs dynamically from DB inside main()
 
 // Helper for HTTP requests
 async function makeRequest(method, path, userId, body = null) {
@@ -39,6 +37,31 @@ async function main() {
   const client = new MongoClient(MONGO_URI);
   await client.connect();
   const db = client.db();
+
+  // Find owner and resident IDs dynamically from DB
+  const ownerUserFromDb = await db.collection('user').findOne({ email: 'owner@demo.com' });
+  const residentUserFromDb = await db.collection('user').findOne({ email: 'resident@demo.com' });
+
+  if (!ownerUserFromDb || !residentUserFromDb) {
+    console.error('Could not find owner or resident user in DB. Please run seed script first.');
+    process.exit(1);
+  }
+
+  const OWNER_ID = ownerUserFromDb._id.toString();
+  const RESIDENT_ID = residentUserFromDb._id.toString();
+
+  // Create another resident user dynamically for IDOR tests
+  const anotherResidentId = new ObjectId();
+  await db.collection('user').insertOne({
+    _id: anotherResidentId,
+    name: 'Another Resident',
+    email: 'another@demo.com',
+    role: 'resident',
+    buildingId: ownerUserFromDb.buildingId,
+  });
+  const ANOTHER_RESIDENT_ID = anotherResidentId.toString();
+
+  console.log(`Resolved IDs dynamically - Owner: ${OWNER_ID}, Resident: ${RESIDENT_ID}, Another Resident: ${ANOTHER_RESIDENT_ID}`);
 
   console.log('Inserting test notices...');
   
@@ -223,13 +246,88 @@ async function main() {
     failedTests++;
   }
 
-  // Cleanup fake notice from DB
-  console.log('\nCleaning up test notices...');
+  // --- REPORTS COLLECTION TESTS ---
+  console.log('\n--- STARTING REPORTS SECURITY ASSERTS ---');
+
+  // Test 13: Resident submits a new report
+  console.log('Test 13: Resident submits report via POST /api/reports...');
+  const reportPayload = {
+    title: 'Water leaking in B2',
+    description: 'There is water leaking near spot 45 in basement 2.',
+    category: 'Maintenance',
+    imageUrl: 'http://example.com/leak.jpg'
+  };
+  const res13 = await makeRequest('POST', '/reports', RESIDENT_ID, reportPayload);
+  let testReportId = null;
+  if (res13.status === 201 && res13.data._id) {
+    testReportId = res13.data._id;
+    console.log(`✅ Passed: Resident report created (ID: ${testReportId}).`);
+  } else {
+    console.log(`❌ Failed: Expected 201, got ${res13.status}.`);
+    failedTests++;
+  }
+
+  if (testReportId) {
+    // Test 14: Owner tries to update report title/description (should be ignored, only status allowed)
+    console.log('Test 14: Owner tries to update report title/description...');
+    const res14 = await makeRequest('PATCH', `/reports/${testReportId}`, OWNER_ID, {
+      title: 'Hacked Title',
+      description: 'Hacked Description',
+      status: 'in_progress'
+    });
+    const reportInDb14 = await db.collection('reports').findOne({ _id: new ObjectId(testReportId) });
+    if (reportInDb14 && reportInDb14.title === 'Water leaking in B2' && reportInDb14.status === 'in_progress') {
+      console.log('✅ Passed: Owner title update was ignored, but status update succeeded.');
+    } else {
+      console.log(`❌ Failed: Owner successfully updated title or status update failed. DB Title: ${reportInDb14?.title}, Status: ${reportInDb14?.status}`);
+      failedTests++;
+    }
+
+    // Test 15: Resident tries to update another resident's report
+    console.log("Test 15: Resident tries to edit another resident's report...");
+    // Resident ID who doesn't own it tries to edit title
+    const res15 = await makeRequest('PATCH', `/reports/${testReportId}`, ANOTHER_RESIDENT_ID, {
+      title: 'Different Resident Hacked Title'
+    });
+    if (res15.status === 403) {
+      console.log("✅ Passed: Resident blocked from editing another resident's report (403 Forbidden).");
+    } else {
+      console.log(`❌ Failed: Expected 403, got ${res15.status}.`);
+      failedTests++;
+    }
+
+    // Test 16: Resident tries to delete another resident's report
+    console.log("Test 16: Resident tries to delete another resident's report...");
+    const res16 = await makeRequest('DELETE', `/reports/${testReportId}`, ANOTHER_RESIDENT_ID);
+    if (res16.status === 403) {
+      console.log("✅ Passed: Resident blocked from deleting another resident's report (403 Forbidden).");
+    } else {
+      console.log(`❌ Failed: Expected 403, got ${res16.status}.`);
+      failedTests++;
+    }
+
+    // Test 17: Resident deletes own report
+    console.log("Test 17: Resident deletes own report...");
+    const res17 = await makeRequest('DELETE', `/reports/${testReportId}`, RESIDENT_ID);
+    if (res17.status === 204) {
+      console.log('✅ Passed: Resident successfully deleted own report.');
+    } else {
+      console.log(`❌ Failed: Expected 204, got ${res17.status}.`);
+      failedTests++;
+    }
+  }
+
+  // Cleanup fake notice & report & dynamic user from DB
+  console.log('\nCleaning up test notices & reports & test users...');
   await db.collection('notices').deleteOne({ _id: fakeNoticeId });
+  if (testReportId) {
+    await db.collection('reports').deleteOne({ _id: new ObjectId(testReportId) });
+  }
+  await db.collection('user').deleteOne({ _id: anotherResidentId });
   await client.close();
 
   if (failedTests === 0) {
-    console.log(`\n🎉 ALL 12 SECURITY INTEGRATION TESTS COMPLETED SUCCESSFULLY!`);
+    console.log(`\n🎉 ALL 17 SECURITY INTEGRATION TESTS COMPLETED SUCCESSFULLY!`);
   } else {
     console.log(`\n❌ SECURITY TESTS FAILED: ${failedTests} failures.`);
     process.exit(1);
