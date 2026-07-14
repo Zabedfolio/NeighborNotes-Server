@@ -218,6 +218,9 @@ const SubscriptionTier = model<ISubscriptionTier>("SubscriptionTier", subscripti
 
 const app = express();
 
+const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || "mongodb://127.0.0.1:27017/neighbornotes";
+
+// ── CORS must be the very first middleware ─────────────────────────────
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.CLIENT_URL,
@@ -227,29 +230,34 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) {
-      callback(null, true);
-      return;
-    }
-    
-    const isAllowed = allowedOrigins.includes(origin) ||
-                      origin.endsWith(".vercel.app") ||
-                      origin.includes("localhost:") ||
-                      origin.includes("127.0.0.1:");
-                      
-    if (isAllowed) {
-      callback(null, true);
-    } else {
-      callback(null, false);
-    }
+    if (!origin) { callback(null, true); return; }
+    const isAllowed =
+      allowedOrigins.includes(origin) ||
+      origin.endsWith(".vercel.app") ||
+      origin.includes("localhost:") ||
+      origin.includes("127.0.0.1:");
+    callback(null, isAllowed);
   },
   credentials: true
 }));
+
 app.use(cookieParser());
-app.use(helmet({
-  contentSecurityPolicy: false, // Turn off CSP if it conflicts with local dev or Better Auth
-}));
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(morgan("dev"));
+
+// Database Connection Middleware — reconnects automatically on Vercel serverless cold starts
+app.use(async (req, res, next) => {
+  if (mongoose.connection.readyState !== 1) {
+    try {
+      await mongoose.connect(MONGO_URI);
+      console.log("Connected to MongoDB.");
+    } catch (err: any) {
+      console.error("DB connection error:", err.message);
+      return res.status(500).json({ error: "Database unavailable" });
+    }
+  }
+  next();
+});
 
 // JSON parser middleware for general REST routes
 app.use(express.json());
@@ -1254,14 +1262,24 @@ async function seedDefaultSubscriptionTiers() {
 // ── 5. START ──────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || "mongodb://127.0.0.1:27017/neighbornotes";
 
-mongoose.connect(MONGO_URI).then(async () => {
-  console.log("Connected to MongoDB successfully via Mongoose.");
-  await seedDefaultSubscriptionTiers();
-  app.listen(PORT, () => {
-    console.log(`NeighborNotes Express Server running on port ${PORT}`);
+// Start the server immediately — don't block on mongoose.
+// The DB middleware handles connection per-request (works for Vercel serverless).
+// For persistent servers (local dev), try an eager connection first.
+mongoose
+  .connect(MONGO_URI)
+  .then(async () => {
+    console.log("Connected to MongoDB successfully via Mongoose.");
+    await seedDefaultSubscriptionTiers();
+  })
+  .catch((err) => {
+    console.warn("Initial Mongoose connection attempt failed (will retry per-request):", err.message);
   });
-}).catch((err) => {
-  console.error("Mongoose connection failure:", err);
+
+// Always listen — the DB middleware will reconnect lazily if needed
+app.listen(PORT, () => {
+  console.log(`NeighborNotes Express Server running on port ${PORT}`);
 });
+
+// Export for Vercel serverless runtime
+export default app;
