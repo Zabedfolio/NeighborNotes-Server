@@ -1054,6 +1054,31 @@ app.get("/api/admin/stats", async (req, res) => {
   }
 });
 
+// GET /api/public/stats - No auth required — used by landing page for dynamic counters & chart
+app.get("/api/public/stats", async (req, res) => {
+  try {
+    const categories = ["Maintenance", "Emergency", "Lost & Found", "Events", "Rules", "General"];
+
+    const [totalReports, resolvedReports, categoryData] = await Promise.all([
+      Report.countDocuments({}),
+      Report.countDocuments({ status: "resolved" }),
+      Notice.aggregate([
+        { $group: { _id: "$category", count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    // Build ordered category array matching the display order
+    const noticesByCategory = categories.map((cat) => {
+      const found = categoryData.find((d: any) => d._id === cat);
+      return { name: cat === "Lost & Found" ? "Lost & Found" : cat, count: found ? found.count : 0 };
+    });
+
+    res.json({ totalReports, resolvedReports, noticesByCategory });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // -- Subscription Tiers API --
 
 // GET /api/subscriptions - Public route to fetch all tiers
