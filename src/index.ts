@@ -5,11 +5,8 @@ import helmet from "helmet";
 import morgan from "morgan";
 import mongoose, { Schema, model } from "mongoose";
 import { fromNodeHeaders } from "better-auth/node";
-import { auth } from "./auth";
-// Stripe has been relocated to frontend Next.js API routes
-import dotenv from "dotenv";
-
-dotenv.config();
+import { auth } from "./auth.js";
+import "dotenv/config";
 
 // ── 1. COLLECTIONS (all schemas defined here, top of file) ──────────────
 

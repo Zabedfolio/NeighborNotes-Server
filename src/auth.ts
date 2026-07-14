@@ -1,9 +1,8 @@
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { MongoClient } from "mongodb";
-import dotenv from "dotenv";
+import "dotenv/config";
 
-dotenv.config();
 
 const connectionString = process.env.MONGODB_URI || process.env.MONGO_URI;
 if (!connectionString) {

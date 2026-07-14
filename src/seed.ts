@@ -1,8 +1,7 @@
 import mongoose, { model, Schema } from "mongoose";
-import { auth } from "./auth";
-import dotenv from "dotenv";
+import { auth } from "./auth.js";
+import "dotenv/config";
 
-dotenv.config();
 
 const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || "mongodb://127.0.0.1:27017/neighbornotes";
 
