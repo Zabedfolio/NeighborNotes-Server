@@ -12,6 +12,9 @@
 
 </div>
 
+> **📡 Live Production API: [neighbor-notes-server.vercel.app](https://neighbor-notes-server.vercel.app)**  
+> **🚀 Frontend App: [neighbor-notes-client-eta.vercel.app](https://neighbor-notes-client-eta.vercel.app)**
+
 ---
 
 ## 📖 About

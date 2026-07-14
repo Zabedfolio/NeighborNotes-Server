@@ -218,7 +218,23 @@ const SubscriptionTier = model<ISubscriptionTier>("SubscriptionTier", subscripti
 
 const app = express();
 
-app.use(cors({ origin: process.env.FRONTEND_URL || process.env.CLIENT_URL, credentials: true }));
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.CLIENT_URL,
+  "http://localhost:3000",
+  "https://neighbor-notes-client-eta.vercel.app"
+].filter(Boolean) as string[];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(null, false); // Block other origins cleanly without throwing uncaught server error
+    }
+  },
+  credentials: true
+}));
 app.use(cookieParser());
 app.use(helmet({
   contentSecurityPolicy: false, // Turn off CSP if it conflicts with local dev or Better Auth
