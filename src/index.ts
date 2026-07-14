@@ -227,10 +227,20 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+    
+    const isAllowed = allowedOrigins.includes(origin) ||
+                      origin.endsWith(".vercel.app") ||
+                      origin.includes("localhost:") ||
+                      origin.includes("127.0.0.1:");
+                      
+    if (isAllowed) {
       callback(null, true);
     } else {
-      callback(null, false); // Block other origins cleanly without throwing uncaught server error
+      callback(null, false);
     }
   },
   credentials: true
