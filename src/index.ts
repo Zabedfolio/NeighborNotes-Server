@@ -319,6 +319,11 @@ function canModify(user: any, doc: any) {
 
 // ── 4. CRUD ROUTES ────────────────────────────────────────────────────
 
+// Root route for verification
+app.get("/", (req, res) => {
+  res.json({ status: "ok", message: "NeighborNotes API Server is active." });
+});
+
 // -- Users --
 app.get("/api/users", async (req, res) => {
   try {
@@ -1273,10 +1278,12 @@ mongoose
     console.warn("Initial Mongoose connection attempt failed (will retry per-request):", err.message);
   });
 
-// Always listen — the DB middleware will reconnect lazily if needed
-app.listen(PORT, () => {
-  console.log(`NeighborNotes Express Server running on port ${PORT}`);
-});
+// Listen only if not running on Vercel (serverless environment)
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`NeighborNotes Express Server running on port ${PORT}`);
+  });
+}
 
 // Export for Vercel serverless runtime
 export default app;
