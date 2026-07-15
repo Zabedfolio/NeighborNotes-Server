@@ -19,8 +19,7 @@ export const auth = betterAuth({
   }),
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL ||
-    (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined) ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined) ||
+    (process.env.VERCEL === "1" ? "https://neighbor-notes-server.vercel.app" : undefined) ||
     "http://localhost:5000",
   trustedOrigins: [
     "http://localhost:3000",
