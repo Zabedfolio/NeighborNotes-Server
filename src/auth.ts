@@ -18,7 +18,10 @@ export const auth = betterAuth({
     transaction: false, // set to false for local standalone MongoDB servers
   }),
   secret: process.env.BETTER_AUTH_SECRET,
-  baseURL: process.env.BETTER_AUTH_URL || "http://localhost:5000",
+  baseURL: process.env.BETTER_AUTH_URL ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined) ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined) ||
+    "http://localhost:5000",
   trustedOrigins: [
     "http://localhost:3000",
     "https://neighbor-notes-client-eta.vercel.app",
