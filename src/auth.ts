@@ -17,6 +17,24 @@ export const auth = betterAuth({
     client,
     transaction: false, // set to false for local standalone MongoDB servers
   }),
+  secret: process.env.BETTER_AUTH_SECRET,
+  baseURL: process.env.BETTER_AUTH_URL || "http://localhost:5000",
+  trustedOrigins: [
+    "http://localhost:3000",
+    "https://neighbor-notes-client-eta.vercel.app",
+    ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+  ],
+  advanced: {
+    crossSubDomainCookies: {
+      enabled: false,
+    },
+    defaultCookieAttributes: {
+      sameSite: "none",
+      secure: true,
+      httpOnly: true,
+      path: "/",
+    },
+  },
   emailAndPassword: {
     enabled: true,
     autoSignIn: true,
