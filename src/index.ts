@@ -239,7 +239,7 @@ app.use(cors({
 }));
 
 app.use(cookieParser());
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use((helmet as any)({ contentSecurityPolicy: false }));
 app.use(morgan("dev"));
 
 // Database Connection Middleware — reconnects automatically on Vercel serverless cold starts
